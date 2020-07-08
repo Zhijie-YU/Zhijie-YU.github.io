@@ -1,7 +1,7 @@
 ## Welcome to my pages
 Nothing useful is presented here. If you don't mind wasting your life, you may have a look.
 ### About me
-<img src="/images/me.jpg" />
+![selfie](/images/me.jpg)
 
 A boy always searching for something unclear.
 
