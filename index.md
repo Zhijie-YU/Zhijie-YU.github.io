@@ -7,8 +7,8 @@ Just enjoy.
 A boy always searching for something interesting.
 ### My Interests
 #### MPM
-A rough implementation of MLS-MPM with Taichi language.[[Click me!](https://github.com/Zhijie-YU/MLS_MPM_CPIC)]
-![image](https://github.com/Zhijie-YU/MLS_MPM_CPIC/blob/main/figures/fan.gif)
+A rough implementation of MLS-MPM with Taichi language.[[Click me!](https://github.com/Zhijie-YU/MLS_MPM_CPIC)]  
+![](https://github.com/Zhijie-YU/MLS_MPM_CPIC/blob/main/figures/fan.gif)
 
 
 
