@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Libuipc-Warp Overview</title>
+<style>
+:root{--fg:#1a1a1a;--mut:#666;--bd:#e3e3e3;--acc:#ff7043;--bg:#fafafa}
+*{box-sizing:border-box}
+body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+color:var(--fg);max-width:1180px;margin:0 auto;padding:32px 24px;background:#fff}
+h1{font-size:28px;margin:0 0 4px}
+h2{font-size:20px;margin:34px 0 8px;border-bottom:2px solid var(--acc);padding-bottom:4px}
+h3{font-size:16px;margin:22px 0 6px;color:var(--fg)}
+.sub{color:var(--mut);margin:0 0 18px}
+video,img{width:100%;border:1px solid var(--bd);border-radius:8px;margin:10px 0;background:#fff;display:block}
+table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+th,td{border:1px solid var(--bd);padding:6px 9px;text-align:right}
+th{background:var(--bg)}
+td:first-child,th:first-child{text-align:left}
+code{background:var(--bg);padding:1px 5px;border-radius:4px;font-size:13px}
+.note{background:var(--bg);border-left:3px solid var(--acc);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:14px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:12px 0}
+.pair figure{margin:0}
+.pair figcaption{color:var(--mut);font-size:13px;margin-top:4px;text-align:center}
+.pair video{margin:0}
+@media (max-width:760px){.pair{grid-template-columns:1fr}}
+ul{margin:8px 0 8px 1.2em;padding:0}
+li{margin:4px 0}
+</style>
+</head>
+<body>
+
+<h1>Libuipc-Warp Overview</h1>
+
+<h2>1. libuipc vs libuipc-warp</h2>
+
+<h3>Case &amp; videos</h3>
+<p>Newton <code>cloth_ipc</code> scene: a 32-cell cloth grid, 1,089 cloth vertices, four boxes, and two simulation substeps per frame at <code>dt = 1/120 s</code>. The saved libuipc fixture matched a fresh Warp scene export array for array. Left: optimized libuipc rendered with Polyscope. Right: libuipc-warp.</p>
+<div class="pair">
+  <figure>
+    <video controls loop muted playsinline>
+      <source src="cloth_ipc_libuipc_optimized_polyscope.mp4" type="video/mp4">
+    </video>
+    <figcaption>libuipc (Polyscope)</figcaption>
+  </figure>
+  <figure>
+    <video controls loop muted playsinline>
+      <source src="cloth_ipc_libuipc_warp.mp4" type="video/mp4">
+    </video>
+    <figcaption>libuipc-warp</figcaption>
+  </figure>
+</div>
+
+<h3>Runtime environment</h3>
+<ul>
+  <li>Headless Windows run on an NVIDIA RTX PRO 5000 Blackwell Generation Laptop GPU.</li>
+  <li>Each configuration ran three 120-frame trials in rotated order in the same benchmark batch. The first 10 frames of each trial were excluded, leaving 330 frame times per configuration.</li>
+  <li>The timer starts before the two substeps and stops after GPU synchronization, using <code>world.sync()</code> for libuipc and <code>wp.synchronize_device()</code> for Warp. Rendering and trajectory export run outside the timed benchmark.</li>
+  <li>Warp Graph-on enabled the solver's substep Graph. Warp Graph-off disabled both capture layers.</li>
+  <li>To bring the corresponding assembly stages closer to libuipc-warp, the local libuipc CUDA build uses low-rank friction Hessian assembly and upper-triangular block coordinate (BCOO) matrix conversion. The optimized Release DLL ran with <code>linear_system/use_cuda_graph=0</code>.</li>
+  <li>Warp stack: Newton <code>56ff670</code>, libuipc-warp <code>f70954b</code>, Warp <code>1.20.0.dev20261117</code>.</li>
+</ul>
+
+<h3>Efficiency comparison</h3>
+<table>
+  <tr>
+    <th>Configuration</th>
+    <th>Trial means (ms/frame)</th>
+    <th>Mean (ms/frame)</th>
+    <th>Median (ms/frame)</th>
+    <th>P95 (ms/frame)</th>
+  </tr>
+  <tr>
+    <td>libuipc-warp, substep Graph enabled</td>
+    <td>7.25 / 6.58 / 6.32</td>
+    <td>6.72</td>
+    <td>4.75</td>
+    <td>14.30</td>
+  </tr>
+  <tr>
+    <td>libuipc-warp, CUDA Graph disabled</td>
+    <td>71.85 / 64.70 / 63.54</td>
+    <td>66.70</td>
+    <td>48.71</td>
+    <td>156.18</td>
+  </tr>
+  <tr>
+    <td>Optimized libuipc, CUDA Graph disabled (mode 0)</td>
+    <td>90.96 / 93.85 / 92.85</td>
+    <td>92.55</td>
+    <td>63.86</td>
+    <td>198.99</td>
+  </tr>
+</table>
+<div class="note">
+  Enabling Warp's substep Graph reduced its mean frame time by a factor of <b>9.93</b>.
+  With Graph disabled in both backends, optimized libuipc took <b>1.39×</b> as long as Warp.
+  Optimized libuipc took <b>13.78×</b> as long as Warp with its substep Graph.
+</div>
+
+</body>
+</html>
