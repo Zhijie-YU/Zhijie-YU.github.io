@@ -12,6 +12,7 @@ color:var(--fg);max-width:1180px;margin:0 auto;padding:32px 24px;background:#fff
 h1{font-size:28px;margin:0 0 4px}
 h2{font-size:20px;margin:34px 0 8px;border-bottom:2px solid var(--acc);padding-bottom:4px}
 h3{font-size:16px;margin:22px 0 6px;color:var(--fg)}
+h4{font-size:15px;margin:18px 0 6px;color:var(--fg)}
 .sub{color:var(--mut);margin:0 0 18px}
 video,img{width:100%;border:1px solid var(--bd);border-radius:8px;margin:10px 0;background:#fff;display:block}
 table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
@@ -27,13 +28,120 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px;font-size:13px}
 @media (max-width:760px){.pair{grid-template-columns:1fr}}
 ul{margin:8px 0 8px 1.2em;padding:0}
 li{margin:4px 0}
+.mermaid{background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:14px;margin:12px 0;overflow-x:auto}
 </style>
 </head>
 <body>
 
 <h1>Libuipc-Warp Overview</h1>
 
-<h2>1. libuipc vs libuipc-warp</h2>
+<h2>1. libuipc-warp IPC Features</h2>
+
+<h3>About libuipc-warp</h3>
+<p>libuipc-warp is a rewrite of libuipc's Incremental Potential Contact (IPC) solver in NVIDIA Warp. It simulates frictional contact between deformable and affine bodies and keeps the main solve on the GPU to reduce CPU-GPU synchronization. It provides a pyuipc-compatible backend and a standalone Warp-array API.</p>
+
+<h3>Feature list</h3>
+<ul>
+  <li><b>Simulation models</b>
+    <ul>
+      <li>Tetrahedral soft bodies with Stable Neo-Hookean elasticity</li>
+      <li>Baraff-Witkin membranes and thin shells</li>
+      <li>Elastic and plastic shell bending</li>
+      <li>Rods, springs, and particles</li>
+      <li>Affine bodies (ABD)</li>
+    </ul>
+  </li>
+  <li><b>Contact and collision</b>
+    <ul>
+      <li>Barrier-based IPC and augmented-Lagrangian IPC (AL-IPC)</li>
+      <li>Friction, self-contact, and continuous collision detection (CCD)</li>
+      <li>Contact thickness and per-material-pair settings</li>
+      <li>Mixed deformable and affine-body contact</li>
+      <li>Static triangle meshes and half planes</li>
+    </ul>
+  </li>
+  <li><b>Constraints and control</b>
+    <ul>
+      <li>Soft position and transform constraints</li>
+      <li>Point-to-point, point-to-edge, and point-to-triangle stitching</li>
+      <li>External forces</li>
+      <li>Revolute, prismatic, fixed, and spherical joints</li>
+      <li>Drives, limits, and loads for revolute and prismatic joints</li>
+    </ul>
+  </li>
+  <li><b>Solvers</b>
+    <ul>
+      <li>Implicit BDF1 and BDF2 time integration</li>
+      <li>Newton iterations with line search</li>
+      <li>PCG with block-diagonal or multilevel additive Schwarz (MAS) preconditioning</li>
+    </ul>
+  </li>
+  <li><b>Interfaces and diagnostics</b>
+    <ul>
+      <li>Optional backend for existing pyuipc scenes. Pass <code>uipc_warp.frontend.Engine()</code> to the pyuipc <code>World</code>.</li>
+      <li>Standalone Warp-array integration through <code>ArrayScene</code> and <code>SimEngine</code>. No pyuipc installation required.</li>
+      <li>A subset of backend models available through the array scene builder</li>
+      <li>Frame statistics, stage timers, and debug dumps</li>
+    </ul>
+  </li>
+</ul>
+
+<h3>Newton integration</h3>
+<p>Newton owns the model, simulation state, and step schedule. At setup, <code>SolverIPC</code> converts the model geometry, materials, and collision filters to <code>ArrayScene</code> and creates the Warp IPC engine.</p>
+<pre class="mermaid">
+flowchart LR
+    Inputs["Newton<br/>state_in, controls, dt"]
+    Adapter["SolverIPC<br/>Map inputs to engine arrays"]
+    Solve["Warp IPC on GPU<br/>Detect contacts and solve"]
+    Output["SolverIPC<br/>Write GPU state_out"]
+    Inputs --> Adapter -->|"engine.advance(dt)"| Solve --> Output
+</pre>
+<ul>
+  <li>The next Newton step can read <code>state_out</code> directly on the GPU.</li>
+  <li>During capture, Python calls <code>SolverIPC.step()</code> to record this data path and the solve in Newton's graph. Replay runs the recorded GPU work without another Python call to <code>SolverIPC.step()</code>.</li>
+  <li>Newton can optionally call <code>check_status()</code> after replay to read status flags. See <a href="#whole-step-cuda-graph">Whole-step CUDA Graph</a> for the device loops and buffer overflow handling.</li>
+</ul>
+
+<h3>Highlights</h3>
+<h4 id="whole-step-cuda-graph">Whole-step CUDA Graph</h4>
+<pre class="mermaid">
+flowchart LR
+    subgraph CPU["CPU (FrameRunner)"]
+        direction TB
+        Launch["Capture if needed, then launch"]
+        Status{"Check status: buffer overflow?"}
+        Retry["Allocate larger buffers<br/>and restore step-start state"]
+        Done["Finish and return status"]
+
+        Launch -.->|"Wait for GPU status"| Status
+        Status -->|No overflow| Done
+        Status -->|Overflow| Retry
+        Retry -->|"Recapture and retry same step"| Launch
+    end
+
+    subgraph GPU["GPU (captured step)"]
+        direction TB
+        Predict["Predict motion and prepare contacts"]
+        Newton{"Continue Newton?"}
+        Iteration["Assemble and run conditional PCG<br/>Apply CCD/CFL bounds and line search"]
+        Finish["Finish step and write status"]
+
+        Predict --> Newton
+        Newton -->|Yes| Iteration --> Newton
+        Newton -->|No| Finish
+    end
+
+    CPU <-->|"Launch to GPU<br/>Status back to CPU"| GPU
+</pre>
+<ul>
+  <li><b>One launch for the full solve.</b> The captured step includes motion prediction, collision detection, contact and material assembly, the linear solve, line search, and state updates. <code>FrameRunner</code> replays the graph with one launch per attempt.</li>
+  <li><b>GPU-driven decisions.</b> Device kernels compute convergence tests and line-search acceptance. Their flags drive <code>wp.capture_while</code> for Newton, PCG, and backtracking, and <code>wp.capture_if</code> for branches such as re-running collision detection. The same graph can take different paths on different steps.</li>
+  <li><b>Fewer CPU-GPU round trips.</b> The CPU reads a small status record after the step. The GPU can advance or exit each loop without returning its residuals, counts, or trial results to the CPU between iterations.</li>
+  <li><b>Recovery when contact counts grow.</b> Preallocated buffers keep their addresses across replays. If a contact list exceeds its capacity, the GPU sets an overflow flag. <code>FrameRunner</code> then grows the buffers, restores the step-start state, and recaptures and retries the same step.</li>
+  <li><b>Caller-owned graphs.</b> Array callers can include the full step alongside their own kernels in an outer CUDA Graph and handle step status themselves.</li>
+</ul>
+
+<h2>2. libuipc vs libuipc-warp</h2>
 
 <h3>Case &amp; videos</h3>
 <p>Newton <code>cloth_ipc</code> scene: a 32-cell cloth grid, 1,089 cloth vertices, four boxes, and two simulation substeps per frame at <code>dt = 1/120 s</code>. The saved libuipc fixture matched a fresh Warp scene export array for array. Left: optimized libuipc rendered with Polyscope. Right: libuipc-warp.</p>
@@ -98,6 +206,11 @@ li{margin:4px 0}
   With Graph disabled in both backends, optimized libuipc took <b>1.39×</b> as long as Warp.
   Optimized libuipc took <b>13.78×</b> as long as Warp with its substep Graph.
 </div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+</script>
 
 </body>
 </html>
