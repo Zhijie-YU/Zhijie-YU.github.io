@@ -1,3 +1,5 @@
 theme: jekyll-theme-cayman
 title: Zhijie's Homepage
 description: somewhere for something
+baseurl: ""
+url: "https://zhijie-yu.github.io"
