@@ -207,6 +207,208 @@ flowchart LR
   Optimized libuipc took <b>13.78×</b> as long as Warp with its substep Graph.
 </div>
 
+<h2>3. libuipc-warp IPC vs VBD</h2>
+<p>Two apple-grasp scenes compare Newton's libuipc-warp <b>IPC</b> backend with the <b>VBD</b> solver. Both solvers use CUDA Graph. The first case uses a rigid apple; the second uses a tetrahedral deformable apple.</p>
+
+<h3>3.1 Rigid-body apple grasp</h3>
+<div class="note">
+  <b>VBD completed the grasp 2.04× as fast as IPC.</b>
+  Median wall time was <b>3.617 s (RTF 4.60×) for IPC</b> and <b>1.777 s (RTF 9.36×) for VBD</b>.
+  Each result covers 499 computed output intervals and 1,996 physics substeps.
+</div>
+
+<h4>Scene &amp; videos</h4>
+<p>A four-finger robot hand approaches a rigid apple resting on a horizontal tabletop. The hand's rigid links follow a prescribed motion to close around the apple, lift it, carry it across the table, and lower it before releasing and retreating. The apple moves freely under gravity and contact forces and settles on the fixed tabletop. Its collision shape is a convex hull, and the tabletop is a static plane.</p>
+<div class="pair">
+  <figure>
+    <video controls autoplay loop muted playsinline preload="metadata">
+      <source src="apple_grasp_aligned_ipc.mp4" type="video/mp4">
+    </video>
+    <figcaption>IPC</figcaption>
+  </figure>
+  <figure>
+    <video controls autoplay loop muted playsinline preload="metadata">
+      <source src="apple_grasp_aligned_vbd.mp4" type="video/mp4">
+    </video>
+    <figcaption>VBD</figcaption>
+  </figure>
+</div>
+
+<h4>Runtime environment</h4>
+<ul>
+  <li><b>CPU</b> Intel Core Ultra 9 285HX</li>
+  <li><b>GPU and driver</b> NVIDIA RTX PRO 5000 Blackwell Generation Laptop GPU, 595.71</li>
+  <li><b>Operating system</b> Windows-11-10.0.26200-SP0</li>
+  <li><b>Software</b> Python 3.12.16, Newton 1.9.0.dev0, Warp 1.20.0.dev20261117, libuipc-warp 0.4.4.dev0</li>
+  <li><b>Execution</b> Headless on CUDA device 0, with a 1/120 s physics step and four substeps per 30 Hz output interval.</li>
+  <li><b>Solver settings</b> VBD runs 20 fixed iterations per physics substep.</li>
+</ul>
+
+<h4>Equivalent simulation FPS over time</h4>
+<img src="Newton_IPC_VBD_CUDA_Graph_Apple_Grasp_FPS.png" alt="IPC and VBD equivalent simulation FPS with phase labels">
+<p>For each computed frame, equivalent FPS is 1,000 divided by its synchronized latency in milliseconds. Lines show the median across three runs, and the bands show the minimum and maximum. The horizontal axis is simulated time at the end of the frame. The 30 FPS line marks real time.</p>
+<p>After the first computed frame, the median of the per-frame rates was <b>191 FPS for IPC</b> and <b>439 FPS for VBD</b>. Counts of frames below 30 FPS in the three runs were <b>0, 1, 1</b> for IPC and <b>1, 1, 1</b> for VBD.</p>
+<p><b>VBD slows as the fingers close and recovers when they release.</b> Its stage median drops from 530 FPS in Approach to 190–198 FPS across Lift, Transfer and Lower, then rises to 466 FPS in Release. A separate diagnostic recorded zero finger–apple contact records per substep in Approach and medians of 95–103 while the apple was held. VBD still runs 20 sweeps per substep. Each sweep accumulates contact forces and Hessians and updates contact multipliers for the rigid-body contacts. The grasp therefore increases the work per sweep until the fingers disengage.</p>
+<p><b>IPC slows over the same contact interval.</b> It falls from 239 FPS in Approach to 84 FPS in Transfer and recovers to 200 FPS in Release. The active grasp introduces barrier and friction terms into the coupled rigid-body system. In a separate solver diagnostic, the mean total number of PCG iterations per substep rose from about 2 in Approach to 69–71 in Transfer and Lower, then fell to 18 in Release. IPC therefore spends more work on each substep while maintaining the grasp.</p>
+
+<h4>Stage wall time</h4>
+<img src="Newton_IPC_VBD_CUDA_Graph_Apple_Grasp_Stage_Timing.png" alt="IPC and VBD wall time by stage">
+<p>Each bar shows the median sum of frame wall times for that stage across three runs, with the GPU synchronized after every output frame. VBD spent less wall time in approach, close, lift, transfer, lower, release, retreat, settle. IPC spent less wall time in hold. The largest absolute difference was during <b>transfer</b> at <b>0.473 s</b>.</p>
+<p>The hold stage includes the first computed frame and its solver initialization. First-frame wall time ranged from <b>220 to 338 ms</b> for VBD and <b>15 to 35 ms</b> for IPC.</p>
+
+<h4>Total wall time</h4>
+<p>After one warm-up per solver, three IPC–VBD pairs ran with GPU synchronization at the start and end of each run. Wall time includes solver setup performed during the run. RTF is 16.633 seconds of simulated time divided by wall time.</p>
+<table>
+  <tr>
+    <th>Alternating pair</th>
+    <th>IPC wall time (s)</th>
+    <th>VBD wall time (s)</th>
+    <th>IPC RTF</th>
+    <th>VBD RTF</th>
+  </tr>
+  <tr><td>1</td><td>3.499</td><td>1.759</td><td>4.75×</td><td>9.46×</td></tr>
+  <tr><td>2</td><td>3.650</td><td>1.777</td><td>4.56×</td><td>9.36×</td></tr>
+  <tr><td>3</td><td>3.617</td><td>1.798</td><td>4.60×</td><td>9.25×</td></tr>
+  <tr><td>Median</td><td><b>3.617</b></td><td><b>1.777</b></td><td><b>4.60×</b></td><td><b>9.36×</b></td></tr>
+</table>
+
+<h4>Contact accuracy</h4>
+<p>Peak penetration was measured at each 1/120 s substep boundary. Values are the median and range across three runs.</p>
+<table>
+  <tr>
+    <th>Contact pair</th>
+    <th>Limit (mm)</th>
+    <th>IPC (mm)</th>
+    <th>VBD (mm)</th>
+  </tr>
+  <tr><td>Fingertip–apple</td><td>0.50</td><td>None detected</td><td>6.622 (6.618–6.630)</td></tr>
+  <tr><td>Apple–table</td><td>0.10</td><td>None detected</td><td>None detected</td></tr>
+</table>
+<p>VBD exceeded the fingertip penetration limit in all three runs. Penetration is measured on the original collision geometry using fingertip vertices inside the apple hull and apple vertices below the tabletop plane. The metric can miss edge-only intersections and peaks between substeps. Contact offsets and stiffness can affect the measured overlap. Evaluating contact fidelity also requires checking surface separation during intended contact. Numerical error requires comparison with a reference solution for the same model.</p>
+
+<h4>Task performance</h4>
+<p>Both configurations completed the grasp, transfer and settling in all three runs. These metrics describe grasp stability and placement for the tested scene.</p>
+<table>
+  <tr>
+    <th>Metric</th>
+    <th>Task limit (mm)</th>
+    <th>IPC (mm)</th>
+    <th>VBD (mm)</th>
+  </tr>
+  <tr><td>Peak apple drift relative to the palm</td><td>3.00</td><td>1.291</td><td>1.297 (1.293–1.301)</td></tr>
+  <tr><td>Final horizontal placement error</td><td>5.00</td><td>1.332</td><td>3.669 (3.580–3.734)</td></tr>
+</table>
+<p>Drift is the maximum displacement of the apple's center of mass in the palm frame, from the end of closure through lowering. Placement error is the final horizontal distance from the apple's center of mass to the target at (0.45 m, 0 m).</p>
+
+<h3>3.2 Tetrahedral apple grasp</h3>
+<div class="note">
+  <b>VBD completed the sequence 1.16× as fast as IPC in these runs.</b>
+  Median wall time was <b>4.123 s</b> for IPC and <b>3.552 s</b> for VBD.
+  Both completed the grasp, transfer, release and settling.
+</div>
+
+<h4>Scene &amp; videos</h4>
+<p>A four-finger rigid hand follows a prescribed trajectory to pick up a free tetrahedral apple, carry it across a fixed tabletop and release it. The apple deforms under contact and gravity. Both videos use the same camera, 1280 × 720 resolution and 30 FPS playback.</p>
+<div class="pair">
+  <figure>
+    <video controls autoplay loop muted playsinline preload="metadata">
+      <source src="tetrahedral_apple_grasp_ipc.mp4" type="video/mp4">
+    </video>
+    <figcaption>IPC</figcaption>
+  </figure>
+  <figure>
+    <video controls autoplay loop muted playsinline preload="metadata">
+      <source src="tetrahedral_apple_grasp_vbd.mp4" type="video/mp4">
+    </video>
+    <figcaption>VBD</figcaption>
+  </figure>
+</div>
+
+<h4>Aligned inputs</h4>
+<table>
+  <tr><th>Input</th><th>Shared value</th></tr>
+  <tr><td>Rest geometry</td><td>Ellipsoid with semiaxes 39.5, 39.5 and 36 mm</td></tr>
+  <tr><td>Mesh</td><td>163 nodes, 320 positively oriented tetrahedra, 320 surface triangles</td></tr>
+  <tr><td>Density and mass</td><td>820 kg/m³, 0.1864 kg</td></tr>
+  <tr><td>FEM material inputs</td><td>Stable Neo-Hookean Lamé inputs μ = 15 kPa and λ = 30 kPa, zero constitutive damping</td></tr>
+  <tr><td>Time discretization</td><td>30 Hz output, four substeps per interval, 1/120 s physics step</td></tr>
+  <tr><td>Duration</td><td>500 stored frames including the initial state, 1,996 solved substeps</td></tr>
+  <tr><td>Gravity and table</td><td>9.81 m/s² downward, fixed plane at z = 0</td></tr>
+  <tr><td>Initial apple height</td><td>Center at z = 40 mm, lowest rest vertex at z = 4 mm</td></tr>
+  <tr><td>Hand motion</td><td>Identical prescribed pose targets for all 17 rigid links</td></tr>
+  <tr><td>Pair sliding friction</td><td>0.80 fingertip–apple, 0.45 apple–table</td></tr>
+  <tr><td>Nominal soft contact offset</td><td>3 mm IPC FEM thickness and 3 mm VBD particle contact radius</td></tr>
+</table>
+<p>The initial particle positions, masses, connectivity, material arrays, gravity and hand targets were checked for exact equality. Shape friction inputs account for arithmetic mixing in IPC and geometric mixing in VBD. The common 3 mm offset allowed the VBD case to retain the apple through transfer. The initial center was raised to keep the surface outside the IPC thickness at initialization.</p>
+
+<h4>Solver settings</h4>
+<ul>
+  <li><b>IPC</b> uses barrier contact, a 1 mm barrier activation distance beyond the nominal offset, and soft pose aims for the hand. FEM surface self-contact is enabled by the IPC backend.</li>
+  <li><b>VBD</b> uses particle–shape contact with a 2 mm detection gap beyond the particle radius, quadratic contact, and prescribed kinematic hands. Its soft contact material uses a stiffness of 20,000 N/m, mixed with the shape materials. Self-contact is disabled. VBD runs 20 iterations per substep.</li>
+  <li>Contact laws, contact sampling, drive compliance and solver stopping conditions differ. The aligned inputs define the shared scene and material. The reported task and deformation metrics describe each configuration.</li>
+</ul>
+
+<h4>Runtime environment</h4>
+<p>Headless on CUDA device 0, NVIDIA RTX PRO 5000 Blackwell Generation Laptop GPU, 595.71. Windows 11, Python 3.12.16, Newton 1.9.0.dev0, Warp 1.20.0.dev20261117 and libuipc-warp 0.4.4.dev0.</p>
+
+<h4>Equivalent simulation FPS over time</h4>
+<img src="Newton_Tetrahedral_Apple_Grasp_Continuous_FPS.png" alt="Equivalent simulation FPS for IPC and VBD">
+<p>FPS is the reciprocal of synchronized frame wall time. Curves show the median across three runs, with min–max bands. The 30 FPS line marks real time. Frame timings exclude diagnostic readback and geometry checks. After the first computed frame, the median of the per-frame curves was <b>128 FPS for IPC</b> and <b>145 FPS for VBD</b>. Counts of frames below 30 FPS were <b>0, 0, 0</b> for IPC and <b>1, 1, 1</b> for VBD.</p>
+<p><b>VBD shows little change as finger–apple contact forms.</b> The stage median goes from 150 FPS in Approach to 146 FPS in Close and 141 FPS in Lift. Each frame runs four substeps with 20 sweeps each, and every sweep updates the same 163 FEM nodes and 320 tetrahedra, including before the fingers touch. The kinematic hand contacts the deformable apple through particle–shape records. In a separate diagnostic, the median finger–apple count went from zero in Approach to about 30 per substep during the grasp. The measured solve and collision time per substep increased only from 1.64 ms in Approach to 1.70 ms in Lift. The mesh updates provide a substantial baseline, and the added contact work is small relative to it in this scene.</p>
+<p><b>IPC varied from 272 FPS in Hold to 67 FPS in Transfer, then recovered to 96 FPS in Lower and 133 FPS in Settle.</b> IPC uses a convergence-driven Newton solve. Each Newton iteration assembles the coupled FEM and contact system, computes a direction with preconditioned conjugate gradients (PCG), and uses continuous collision detection and backtracking to select a step. The number of iterations and the work per iteration vary with the contact configuration.</p>
+<p>A separate run recorded IPC counters for all 1,996 substeps. The median substep went from <b>2 Newton iterations, 4 total PCG iterations and 2 line-search trials in Approach</b> to <b>4, 105 and 5 in Transfer</b>, then to <b>3, 72 and 3 in Lower</b>. Median reported mesh contact candidates also rose from 0 in Approach to 426 in Transfer and fell to 349 in Lower. These counts show why IPC spends more time per frame while carrying the apple and why it speeds up during lowering.</p>
+
+<h4>Stage wall time</h4>
+<img src="Newton_Tetrahedral_Apple_Grasp_Continuous_Stage_Timing.png" alt="Stage wall-time comparison for IPC and VBD">
+<p>Bars show the median sum of synchronized frame times within each stage. VBD took less time in <b>6 of 9 stages</b>. The largest absolute difference was <b>0.505 s</b> during <b>transfer</b>, where VBD took less time.</p>
+
+<h4>Total wall time and RTF</h4>
+<p>After one warm-up per solver, three IPC–VBD pairs ran from fresh scenes. The GPU was synchronized at the start and end of each run. Wall time includes solver setup performed during the run and excludes rendering and diagnostic readback. RTF is 16.633 simulated seconds divided by elapsed wall time.</p>
+<table>
+  <tr>
+    <th>Pair</th>
+    <th>IPC wall time (s)</th>
+    <th>VBD wall time (s)</th>
+    <th>IPC RTF</th>
+    <th>VBD RTF</th>
+  </tr>
+  <tr><td>1</td><td>4.235</td><td>3.542</td><td>3.93×</td><td>4.70×</td></tr>
+  <tr><td>2</td><td>4.115</td><td>3.552</td><td>4.04×</td><td>4.68×</td></tr>
+  <tr><td>3</td><td>4.123</td><td>3.597</td><td>4.03×</td><td>4.62×</td></tr>
+  <tr><td>Median</td><td><b>4.123</b></td><td><b>3.552</b></td><td><b>4.03×</b></td><td><b>4.68×</b></td></tr>
+</table>
+
+<h4>Contact penetration</h4>
+<p>Three separate IPC–VBD pairs sampled the original meshes at every 1/120 s substep boundary. Values are the median and range of each run's peak, in millimeters.</p>
+<table>
+  <tr>
+    <th>Contact pair</th>
+    <th>Reference limit (mm)</th>
+    <th>IPC (mm)</th>
+    <th>VBD (mm)</th>
+  </tr>
+  <tr><td>Fingertip–apple</td><td>0.50</td><td>None detected</td><td>1.538 (1.538–1.538)</td></tr>
+  <tr><td>Apple–table</td><td>0.10</td><td>None detected</td><td>None detected</td></tr>
+</table>
+<p>The largest VBD fingertip overlap was <b>1.538 mm</b> during release at <b>12.742 s</b> (fingertip). The peak from the end of closure through lowering was <b>1.475 mm</b>. Fingertip penetration measures the nearest surface distance for fingertip vertices inside the deformed apple, using winding classification and the simulated fingertip transforms. Table penetration measures apple vertices below the plane. These samples can miss edge-only intersections and between-substep peaks. Each configuration passed the case's grasp and settling checks. The penetration data describe the tested contact configurations.</p>
+
+<h4>Grasp validation</h4>
+<table>
+  <tr>
+    <th>Metric</th>
+    <th>IPC</th>
+    <th>VBD</th>
+  </tr>
+  <tr><td>Lift (mm)</td><td>216.887</td><td>216.727</td></tr>
+  <tr><td>Horizontal travel (mm)</td><td>449.684</td><td>449.812</td></tr>
+  <tr><td>Horizontal placement error (mm)</td><td>2.604</td><td>1.655</td></tr>
+  <tr><td>Final lowest vertex above the tabletop (mm)</td><td>3.853</td><td>2.999</td></tr>
+  <tr><td>Final center speed RMS (mm/s)</td><td>9.167</td><td>8.127</td></tr>
+  <tr><td>Minimum sampled tetrahedron volume fraction</td><td>0.654</td><td>0.730</td></tr>
+  <tr><td>Peak sampled per-element volume change (%)</td><td>34.614</td><td>26.976</td></tr>
+</table>
+<p>Volume statistics use all tetrahedra at each 30 Hz output frame. Each solver passed the same checks for pickup, horizontal transfer, fingertip proximity at lift and transfer, final placement and settling. All sampled tetrahedral volumes stayed positive.</p>
+
 <script type="module">
   import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
   mermaid.initialize({ startOnLoad: true, theme: "neutral" });
