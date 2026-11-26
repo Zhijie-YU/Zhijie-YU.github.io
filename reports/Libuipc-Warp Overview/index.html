@@ -145,6 +145,7 @@ flowchart LR
 
 <h3>Case &amp; videos</h3>
 <p>Newton <code>cloth_ipc</code> scene: a 32-cell cloth grid, 1,089 cloth vertices, four boxes, and two simulation substeps per frame at <code>dt = 1/120 s</code>. The saved libuipc fixture matched a fresh Warp scene export array for array. Left: optimized libuipc rendered with Polyscope. Right: libuipc-warp.</p>
+<p><b>Scene scale.</b> The cloth is 1.44 &times; 1.44 m, with 45 mm between neighboring grid vertices at rest. It starts 0.90 m above the ground and 0.392 m above the tallest box top. The four boxes measure 0.50 &times; 0.50 &times; 0.30 m, 0.20 &times; 0.20 &times; 0.20 m, 0.24 &times; 0.60 &times; 0.16 m, and 0.20 &times; 0.20 &times; 0.40 m in local coordinates.</p>
 <div class="pair">
   <figure>
     <video controls autoplay loop muted playsinline>
@@ -194,7 +195,7 @@ flowchart LR
     <td>156.18</td>
   </tr>
   <tr>
-    <td>Optimized libuipc, CUDA Graph disabled (mode 0)</td>
+    <td>libuipc, CUDA Graph disabled</td>
     <td>90.96 / 93.85 / 92.85</td>
     <td>92.55</td>
     <td>63.86</td>
@@ -203,9 +204,26 @@ flowchart LR
 </table>
 <div class="note">
   Enabling Warp's substep Graph reduced its mean frame time by a factor of <b>9.93</b>.
-  With Graph disabled in both backends, optimized libuipc took <b>1.39×</b> as long as Warp.
-  Optimized libuipc took <b>13.78×</b> as long as Warp with its substep Graph.
+  With Graph disabled in both backends, libuipc took <b>1.39&times;</b> as long as Warp.
+  libuipc took <b>13.78&times;</b> as long as Warp with its substep Graph.
+  <br><br>
+  libuipc's default Graph mode captures a block of PCG iterations within the linear solve. Collision detection, assembly, Newton iteration, and line search remain outside that graph. Earlier runs of this scene with the upstream build showed a smaller gain from mode 1, with mean frame time about 18% lower than mode 0 across separate timing batches. The table uses mode 0 (<code>linear_system/use_cuda_graph=0</code>) to provide a baseline with CUDA Graph disabled in both backends.
 </div>
+
+<h3 id="cloth-trajectory-agreement">Trajectory agreement</h3>
+<p>The same scene ran for 120 frames (2.00 s) with CUDA Graph disabled in libuipc and the substep Graph enabled in libuipc-warp. We compared the world-space positions of all 1,089 corresponding cloth vertices at each of the 240 substep boundaries. The initial positions matched. These metrics measure agreement between the two trajectories.</p>
+<img src="cloth_ipc_trajectory_rmse.png" alt="Cloth vertex RMSE versus simulation time. The curve rises shortly after the cloth comes within 5 mm of a box and ends at 46.25 mm.">
+<table>
+  <tr><th>Cloth vertex metric</th><th>Value</th><th>Share of 1.44 m cloth width</th></tr>
+  <tr><td>RMSE over all vertices and substeps</td><td>38.25 mm</td><td>2.66%</td></tr>
+  <tr><td>Peak single-vertex deviation</td><td>225.54 mm at 1.658 s</td><td>15.66%</td></tr>
+  <tr><td>Final-frame RMSE</td><td>46.25 mm at 2.00 s</td><td>3.21%</td></tr>
+</table>
+<p>The final-frame RMSE is about one rest-grid spacing (45 mm). The peak single-vertex deviation slightly exceeds the width of the 200 mm cube.</p>
+<p>The trajectories begin to diverge as the cloth enters the box contact range. The dashed line marks 0.283 s, when both runs first measured a cloth vertex less than 5 mm from a box surface. The 5 mm threshold comes from the scene's IPC barrier activation distance (<code>d_hat = 0.005 m</code>). It marks the onset of contact proximity before the surfaces touch.</p>
+
+<h4>Contact clearance</h4>
+<p>At the sampled substep boundaries, the minimum cloth-vertex clearance to the boxes was 2.60 mm in libuipc and 1.65 mm in libuipc-warp. The minimum clearance to the ground was 2.36 mm and 1.97 mm, respectively. No cloth triangle intersected a box and no cloth vertex penetrated the ground at the sampled states.</p>
 
 <h2>3. libuipc-warp IPC vs VBD</h2>
 <p>Two apple-grasp scenes compare Newton's libuipc-warp <b>IPC</b> backend with the <b>VBD</b> solver. Both solvers use CUDA Graph. The first case uses a rigid apple; the second uses a tetrahedral deformable apple.</p>
